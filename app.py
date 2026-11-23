@@ -738,8 +738,9 @@ def create_admin():
 # -----------------------------
 
 if __name__ == "__main__":
-    init_db()
+ init_db()
 
+if __name__ == "__main__":
     if "--create-admin" in sys.argv:
         create_admin()
     else:
