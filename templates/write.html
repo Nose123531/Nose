@@ -1,0 +1,43 @@
+
+{% extends "base.html" %}
+
+{% block title %}글 작성 - NOSE{% endblock %}
+
+{% block content %}
+<section class="form-box">
+
+    <h1>CREATE POST</h1>
+    <p>게시글 작성</p>
+
+    <form method="POST">
+
+        <input
+            type="text"
+            name="title"
+            placeholder="제목"
+            maxlength="100"
+            required
+        >
+
+        <select name="category" required>
+            <option value="자유">자유게시판</option>
+
+            {% if session.get("role") == "admin" %}
+                <option value="공지">공지사항</option>
+            {% endif %}
+        </select>
+
+        <textarea
+            name="content"
+            placeholder="내용을 입력하세요."
+            maxlength="5000"
+            required
+        ></textarea>
+
+        <button type="submit">게시물 등록</button>
+
+    </form>
+
+</section>
+{% endblock %}
+

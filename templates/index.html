@@ -1,0 +1,23 @@
+
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+    <p class="small-title">OFFICIAL WEBSITE</p>
+    <h1>WELCOME TO <span>NOSE</span></h1>
+    <p>새로운 공간, 새로운 시작.</p>
+    <a class="button" href="/board">게시판 둘러보기</a>
+</section>
+
+<section class="panel">
+    <h2>RECENT POSTS</h2>
+    {% for post in posts %}
+        <a class="post-item" href="/post/{{ post.id }}">
+            <span>{{ post.category }}</span>
+            {{ post.title }}
+            <small>{{ post.username }}</small>
+        </a>
+    {% else %}
+        <p class="muted">아직 등록된 게시물이 없습니다.</p>
+    {% endfor %}
+</section>
+{% endblock %}

@@ -1,0 +1,80 @@
+
+{% extends "base.html" %}
+
+{% block title %}{{ post.title }} - NOSE{% endblock %}
+
+{% block content %}
+<section class="form-box">
+
+    <span>{{ post.category }}</span>
+
+    <h1>{{ post.title }}</h1>
+
+    <p>
+        작성자: {{ post.username }}
+        · {{ post.created_at }}
+    </p>
+
+    <hr>
+
+    <div class="post-content">
+        {{ post.content }}
+    </div>
+
+    <hr>
+
+    {% if session.get("user_id") == post.user_id or session.get("role") == "admin" %}
+    <form action="{{ url_for('delete_post', post_id=post.id) }}" method="POST">
+        <button type="submit">게시글 삭제</button>
+    </form>
+    {% endif %}
+
+    <a href="{{ url_for('board') }}">게시판으로 돌아가기</a>
+
+    <hr>
+
+    <h2>댓글</h2>
+
+    {% if session.get("user_id") %}
+    <form action="{{ url_for('add_comment', post_id=post.id) }}" method="POST">
+        <textarea
+            name="content"
+            placeholder="댓글을 입력하세요."
+            maxlength="1000"
+            required
+        ></textarea>
+
+        <button type="submit">댓글 등록</button>
+    </form>
+    {% else %}
+    <p>댓글을 작성하려면 로그인해 주세요.</p>
+    {% endif %}
+
+    <div class="comment-list">
+
+        {% for comment in comments %}
+        <div class="comment-card">
+
+            <strong>{{ comment.username }}</strong>
+            <small>{{ comment.created_at }}</small>
+
+            <p>{{ comment.content }}</p>
+
+            {% if session.get("user_id") == comment.user_id or session.get("role") == "admin" %}
+            <form
+                action="{{ url_for('delete_comment', comment_id=comment.id) }}"
+                method="POST"
+            >
+                <button type="submit">댓글 삭제</button>
+            </form>
+            {% endif %}
+
+        </div>
+        {% else %}
+        <p>아직 댓글이 없습니다.</p>
+        {% endfor %}
+
+    </div>
+
+</section>
+{% endblock %}

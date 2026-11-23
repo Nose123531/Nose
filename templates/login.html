@@ -1,0 +1,14 @@
+
+{% extends "base.html" %}
+{% block title %}로그인 | NOSE{% endblock %}
+{% block content %}
+<section class="form-box">
+    <h1>NOSE LOGIN</h1>
+    <form method="POST">
+        <input name="username" placeholder="아이디" required>
+        <input name="password" type="password" placeholder="비밀번호" required>
+        <button type="submit">로그인</button>
+    </form>
+    <p>계정이 없으신가요? <a href="/register">회원가입</a></p>
+</section>
+{% endblock %}

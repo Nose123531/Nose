@@ -1,0 +1,13 @@
+
+{% extends "base.html" %}
+{% block title %}내 프로필 | NOSE{% endblock %}
+{% block content %}
+<section class="panel">
+    <h1>MY PROFILE</h1>
+    <div class="profile-avatar">{{ user.username[0]|upper }}</div>
+    <h2>{{ user.username }}</h2>
+    <p>회원 번호: {{ user.id }}</p>
+    <p>계정 유형: {{ "관리자" if user.role == "admin" else "일반 회원" }}</p>
+    <p>가입일: {{ user.created_at }}</p>
+</section>
+{% endblock %}

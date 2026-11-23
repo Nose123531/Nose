@@ -1,0 +1,60 @@
+
+{% extends "base.html" %}
+
+{% block title %}게시판 - Nose{% endblock %}
+
+{% block content %}
+<div class="container">
+
+    <h1>NOSE 게시판</h1>
+    <p>NOSE COMMUNITY</p>
+
+    <div class="board-menu">
+        <a href="{{ url_for('board', category='공지') }}">
+            공지사항
+        </a>
+
+        <a href="{{ url_for('board', category='자유') }}">
+            자유게시판
+        </a>
+
+        <a href="{{ url_for('board') }}">
+            전체 게시글
+        </a>
+    </div>
+
+    {% if session.get("user_id") %}
+        <a href="{{ url_for('write') }}" class="btn">글쓰기</a>
+    {% endif %}
+
+    <div class="board-list">
+
+        {% for post in posts %}
+        <div class="post-card">
+
+            <span>{{ post.category or "자유" }}</span>
+
+            <h2>
+                <a href="{{ url_for('post_detail', post_id=post.id) }}">
+                    {{ post.title }}
+                </a>
+            </h2>
+
+            <p>작성자: {{ post.username }}</p>
+            <small>{{ post.created_at }}</small>
+
+            {% if session.get("user_id") == post.user_id or session.get("role") == "admin" %}
+            <form action="{{ url_for('delete_post', post_id=post.id) }}" method="POST">
+                <button type="submit">삭제</button>
+            </form>
+            {% endif %}
+
+        </div>
+        {% else %}
+            <p>등록된 게시글이 없습니다.</p>
+        {% endfor %}
+
+    </div>
+
+</div>
+{% endblock %}
