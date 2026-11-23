@@ -1,12 +1,10 @@
 
 {% extends "base.html" %}
-
 {% block title %}{{ post.title }} - NOSE{% endblock %}
 
 {% block content %}
-<section class="form-box">
-
-    <span>{{ post.category }}</span>
+<section class="post-detail">
+    <span class="category">{{ post.category }}</span>
 
     <h1>{{ post.title }}</h1>
 
@@ -23,58 +21,58 @@
 
     <hr>
 
-    {% if session.get("user_id") == post.user_id or session.get("role") == "admin" %}
-    <form action="{{ url_for('delete_post', post_id=post.id) }}" method="POST">
-        <button type="submit">게시글 삭제</button>
+    {% if session.get("user_id") %}
+    <form method="POST" action="{{ url_for('like', post_id=post.id) }}">
+        <button type="submit">
+            {% if liked %}좋아요 취소{% else %}좋아요{% endif %}
+            ({{ like_count }})
+        </button>
     </form>
+    {% else %}
+    <p>로그인하면 좋아요를 누를 수 있습니다.</p>
     {% endif %}
-
-    <a href="{{ url_for('board') }}">게시판으로 돌아가기</a>
-
-    <hr>
 
     <h2>댓글</h2>
 
     {% if session.get("user_id") %}
-    <form action="{{ url_for('add_comment', post_id=post.id) }}" method="POST">
-        <textarea
-            name="content"
-            placeholder="댓글을 입력하세요."
-            maxlength="1000"
-            required
-        ></textarea>
-
-        <button type="submit">댓글 등록</button>
+    <form method="POST"
+          action="{{ url_for('add_comment', post_id=post.id) }}">
+        <textarea name="content" placeholder="댓글을 입력하세요" required></textarea>
+        <button type="submit">댓글 작성</button>
     </form>
     {% else %}
-    <p>댓글을 작성하려면 로그인해 주세요.</p>
+    <p>댓글을 작성하려면 로그인하세요.</p>
     {% endif %}
 
     <div class="comment-list">
-
         {% for comment in comments %}
-        <div class="comment-card">
+            {% if not comment.parent_id %}
+            <div class="comment">
+                <strong>{{ comment.username }}</strong>
+                <p>{{ comment.content }}</p>
 
-            <strong>{{ comment.username }}</strong>
-            <small>{{ comment.created_at }}</small>
+                {% if session.get("user_id") %}
+                <form method="POST"
+                      action="{{ url_for('add_comment', post_id=post.id) }}">
+                    <input type="hidden" name="parent_id" value="{{ comment.id }}">
+                    <input name="content" placeholder="답글 작성" required>
+                    <button type="submit">답글</button>
+                </form>
+                {% endif %}
 
-            <p>{{ comment.content }}</p>
-
-            {% if session.get("user_id") == comment.user_id or session.get("role") == "admin" %}
-            <form
-                action="{{ url_for('delete_comment', comment_id=comment.id) }}"
-                method="POST"
-            >
-                <button type="submit">댓글 삭제</button>
-            </form>
+                {% for reply in comments %}
+                    {% if reply.parent_id == comment.id %}
+                    <div class="reply">
+                        <strong>{{ reply.username }}</strong>
+                        <p>{{ reply.content }}</p>
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
             {% endif %}
-
-        </div>
-        {% else %}
-        <p>아직 댓글이 없습니다.</p>
         {% endfor %}
-
     </div>
 
+    <a href="{{ url_for('index') }}">게시판으로 돌아가기</a>
 </section>
 {% endblock %}

@@ -1,0 +1,14 @@
+
+{% extends "base.html" %}
+{% block title %}알림 - NOSE{% endblock %}
+{% block content %}
+<h1>알림</h1>
+{% for item in items %}
+    <article class="post-item">
+        <a href="{{ item.url }}">{{ item.message }}</a>
+        <small>{{ item.created_at }}</small>
+    </article>
+{% else %}
+    <p>새로운 알림이 없습니다.</p>
+{% endfor %}
+{% endblock %}

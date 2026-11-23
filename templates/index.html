@@ -1,23 +1,63 @@
 
 {% extends "base.html" %}
-{% block content %}
-<section class="hero">
-    <p class="small-title">OFFICIAL WEBSITE</p>
-    <h1>WELCOME TO <span>NOSE</span></h1>
-    <p>새로운 공간, 새로운 시작.</p>
-    <a class="button" href="/board">게시판 둘러보기</a>
-</section>
+{% block title %}자유게시판 - NOSE{% endblock %}
 
-<section class="panel">
-    <h2>RECENT POSTS</h2>
-    {% for post in posts %}
-        <a class="post-item" href="/post/{{ post.id }}">
-            <span>{{ post.category }}</span>
-            {{ post.title }}
-            <small>{{ post.username }}</small>
-        </a>
-    {% else %}
-        <p class="muted">아직 등록된 게시물이 없습니다.</p>
-    {% endfor %}
+{% block content %}
+<section class="board">
+    <h1>NOSE 게시판</h1>
+
+    <form method="GET" action="{{ url_for('index') }}" class="search-form">
+        <input
+            type="text"
+            name="q"
+            placeholder="게시글 검색"
+            value="{{ q }}"
+        >
+        <button type="submit">검색</button>
+    </form>
+
+    <div class="board-menu">
+        <a href="{{ url_for('index') }}">전체</a>
+        <a href="{{ url_for('index', category='공지사항') }}">공지사항</a>
+        <a href="{{ url_for('index', category='일반 게시물') }}">일반 게시물</a>
+        <a href="{{ url_for('write') }}">글쓰기</a>
+    </div>
+
+    <form method="GET" action="{{ url_for('index') }}">
+        <input type="hidden" name="q" value="{{ q }}">
+        <input type="hidden" name="category" value="{{ category }}">
+
+        <select name="sort" onchange="this.form.submit()">
+            <option value="latest" {% if sort == 'latest' %}selected{% endif %}>
+                최신순
+            </option>
+            <option value="popular" {% if sort == 'popular' %}selected{% endif %}>
+                인기순
+            </option>
+        </select>
+    </form>
+
+    <div class="post-list">
+        {% for post in posts %}
+        <article class="post-item">
+            <div>
+                <span class="category">{{ post.category }}</span>
+                <a href="{{ url_for('post', post_id=post.id) }}">
+                    <strong>{{ post.title }}</strong>
+                </a>
+            </div>
+
+            <p>{{ post.username }}</p>
+
+            <small>
+                좋아요 {{ post.like_count }}
+                · 댓글 {{ post.comment_count }}
+                · {{ post.created_at }}
+            </small>
+        </article>
+        {% else %}
+        <p>게시글이 없습니다.</p>
+        {% endfor %}
+    </div>
 </section>
 {% endblock %}

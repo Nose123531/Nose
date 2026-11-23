@@ -1,13 +1,29 @@
 
 {% extends "base.html" %}
-{% block title %}내 프로필 | NOSE{% endblock %}
+{% block title %}프로필 - NOSE{% endblock %}
 {% block content %}
-<section class="panel">
-    <h1>MY PROFILE</h1>
-    <div class="profile-avatar">{{ user.username[0]|upper }}</div>
-    <h2>{{ user.username }}</h2>
-    <p>회원 번호: {{ user.id }}</p>
-    <p>계정 유형: {{ "관리자" if user.role == "admin" else "일반 회원" }}</p>
-    <p>가입일: {{ user.created_at }}</p>
+<section class="form-box wide">
+    <h1>{{ profile.nickname or profile.username }}</h1>
+    <p>@{{ profile.username }}</p>
+    <p>{{ profile.bio or '소개가 없습니다.' }}</p>
+    <p>게시글 {{ posts|length }}개 · 팔로워 {{ followers }}명 · 팔로잉 {{ following }}명</p>
+
+    {% if current_user and current_user.id == profile.id %}
+        <a class="btn" href="{{ url_for('edit_profile') }}">프로필 수정</a>
+    {% elif current_user %}
+        <form method="POST" action="{{ url_for('follow', user_id=profile.id) }}">
+            <button>{{ '팔로우 취소' if followed else '팔로우' }}</button>
+        </form>
+        <a class="btn" href="{{ url_for('messages', user_id=profile.id) }}">쪽지 보내기</a>
+    {% endif %}
+
+    <h2>작성한 게시글</h2>
+    {% for post in posts %}
+        <article class="post-item">
+            <a href="{{ url_for('post', post_id=post.id) }}">{{ post.title }}</a>
+        </article>
+    {% else %}
+        <p>작성한 게시글이 없습니다.</p>
+    {% endfor %}
 </section>
 {% endblock %}

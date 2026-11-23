@@ -1,0 +1,19 @@
+
+{% extends "base.html" %}
+{% block title %}쪽지 - NOSE{% endblock %}
+{% block content %}
+<h1>쪽지</h1>
+<div class="post-list">
+    {% for item in items %}
+        <article class="post-item">
+            <p>{{ '내가 보냄' if item.sender_id == session.user_id else '받은 쪽지' }}</p>
+            <p>{{ item.content }}</p>
+            <small>{{ item.created_at }}</small>
+        </article>
+    {% endfor %}
+</div>
+<form method="POST">
+    <textarea name="content" placeholder="쪽지 입력" required></textarea>
+    <button type="submit">보내기</button>
+</form>
+{% endblock %}

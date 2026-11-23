@@ -1,0 +1,10 @@
+
+{% extends "base.html" %}
+{% block title %}오류 {{ code }} - NOSE{% endblock %}
+{% block content %}
+<div class="form-box">
+    <h1>{{ code }}</h1>
+    <p>{{ message }}</p>
+    <a class="btn" href="{{ url_for('index') }}">홈으로 돌아가기</a>
+</div>
+{% endblock %}

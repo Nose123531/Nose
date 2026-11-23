@@ -9,34 +9,39 @@
 </head>
 <body>
 <header>
-    <a class="logo" href="/">NOSE</a>
+    <a class="logo" href="{{ url_for('index') }}">NOSE</a>
     <nav>
-        <a href="/">홈</a>
-        <a href="/board">게시판</a>
-        {% if session.get('user_id') %}
-            <a href="/profile">내 프로필</a>
-            <a href="/write">글쓰기</a>
-            {% if session.get('username') %}
-                <a href="/admin">관리자</a>
+        <a href="{{ url_for('index') }}">홈</a>
+        <a href="{{ url_for('index', category='일반 게시물') }}">게시판</a>
+        <a href="{{ url_for('chat') }}">채팅</a>
+        {% if current_user %}
+            <a href="{{ url_for('notifications') }}">알림 ({{ unread_count }})</a>
+            <a href="{{ url_for('profile', user_id=current_user.id) }}">내 프로필</a>
+            {% if current_user.is_admin %}
+                <a href="{{ url_for('admin') }}">관리자</a>
             {% endif %}
-            <a href="/logout">로그아웃</a>
+            <a href="{{ url_for('logout') }}">로그아웃</a>
         {% else %}
-            <a href="/login">로그인</a>
-            <a href="/register">회원가입</a>
+            <a href="{{ url_for('login') }}">로그인</a>
+            <a href="{{ url_for('register') }}">회원가입</a>
         {% endif %}
     </nav>
 </header>
 
 {% with messages = get_flashed_messages() %}
-    {% for message in messages %}
-        <div class="message">{{ message }}</div>
-    {% endfor %}
+    {% if messages %}
+        <div class="flash">
+            {% for message in messages %}
+                <p>{{ message }}</p>
+            {% endfor %}
+        </div>
+    {% endif %}
 {% endwith %}
 
 <main>
     {% block content %}{% endblock %}
 </main>
 
-<footer>© 2026 NOSE. All rights reserved.</footer>
+<footer>NOSE COMMUNITY · ALL RIGHTS RESERVED</footer>
 </body>
 </html>

@@ -1,0 +1,16 @@
+
+{% extends "base.html" %}
+{% block title %}프로필 수정 - NOSE{% endblock %}
+{% block content %}
+<div class="form-box">
+    <h1>프로필 수정</h1>
+    <form method="POST">
+        <input name="nickname" maxlength="30"
+               value="{{ user.nickname or user.username }}"
+               placeholder="닉네임">
+        <textarea name="bio" maxlength="200"
+                  placeholder="자기소개">{{ user.bio or '' }}</textarea>
+        <button type="submit">저장</button>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,20 @@
+
+{% extends "base.html" %}
+{% block title %}공개 채팅 - NOSE{% endblock %}
+{% block content %}
+<h1>NOSE 공개 채팅</h1>
+<div class="chat-box">
+    {% for item in items %}
+        <article class="comment">
+            <strong>{{ item.username }}</strong>
+            <p>{{ item.content }}</p>
+            <small>{{ item.created_at }}</small>
+        </article>
+    {% endfor %}
+</div>
+<form method="POST">
+    <input name="content" placeholder="메시지를 입력하세요" maxlength="1000" required>
+    <button>전송</button>
+</form>
+<p class="muted">메시지는 전송 후 새로고침해야 확인할 수 있습니다.</p>
+{% endblock %}

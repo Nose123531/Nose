@@ -1,160 +1,328 @@
-
 import os
 import sqlite3
-import argparse
-from pathlib import Path
 from functools import wraps
-from datetime import datetime
 
 from flask import (
     Flask, render_template, request, redirect,
     url_for, session, flash, abort
 )
-from werkzeug.security import (
-    generate_password_hash,
-    check_password_hash
-)
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-app.secret_key = os.environ.get(
-    "SECRET_KEY", "nose-local-secret-change-this"
-)
+app.secret_key = os.environ.get("SECRET_KEY", "change-this-secret-key")
 
-DB_PATH = os.environ.get(
-    "DB_PATH",
-    str(Path(__file__).resolve().parent / "users.db")
-)
+DB = os.environ.get("DATABASE_PATH", "users.db")
+UPLOAD_FOLDER = "static/uploads"
+
+if os.path.dirname(DB):
+    os.makedirs(os.path.dirname(DB), exist_ok=True)
+
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# DB 일회성 초기화
+if os.environ.get("RESET_DATABASE_ONCE") == "1":
+    for suffix in ("", "-wal", "-shm"):
+        path = DB + suffix
+        if os.path.exists(path):
+            os.remove(path)
+    print("[DB] 데이터베이스 초기화 완료")
+
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
 
 
 def db():
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
     return conn
 
 
+def columns(conn, table):
+    return {
+        row["name"]
+        for row in conn.execute(f"PRAGMA table_info({table})")
+    }
+
+
+def add_column(conn, table, name, definition):
+    if name not in columns(conn, table):
+        conn.execute(
+            f"ALTER TABLE {table} ADD COLUMN {name} {definition}"
+        )
+
+
 def init_db():
-    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    c = db()
 
-    conn = db()
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS users(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
+    CREATE TABLE IF NOT EXISTS posts(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        username TEXT,
+        category TEXT DEFAULT '일반 게시물',
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS comments(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        post_id INTEGER,
+        user_id INTEGER,
+        username TEXT,
+        content TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS site_stats(
+        name TEXT PRIMARY KEY,
+        value INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS likes(
+        user_id INTEGER,
+        post_id INTEGER,
+        PRIMARY KEY(user_id, post_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS follows(
+        follower_id INTEGER,
+        following_id INTEGER,
+        PRIMARY KEY(follower_id, following_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS notifications(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        message TEXT,
+        url TEXT,
+        is_read INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS messages(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_id INTEGER,
+        receiver_id INTEGER,
+        content TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_messages(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        username TEXT,
+        content TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS admin_logs(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        admin TEXT,
+        action TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS visitor_days(
+        day TEXT PRIMARY KEY,
+        count INTEGER DEFAULT 0
+    );
     """)
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS posts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            username TEXT NOT NULL,
-            category TEXT DEFAULT '일반 게시물',
-            title TEXT NOT NULL,
-            content TEXT NOT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
+    for name, definition in [
+        ("nickname", "TEXT"),
+        ("bio", "TEXT DEFAULT ''"),
+        ("avatar", "TEXT DEFAULT ''"),
+        ("is_banned", "INTEGER DEFAULT 0"),
+        ("is_admin", "INTEGER DEFAULT 0"),
+        ("role", "TEXT DEFAULT 'user'")
+    ]:
+        add_column(c, "users", name, definition)
+
+    add_column(c, "posts", "views", "INTEGER DEFAULT 0")
+    add_column(c, "comments", "parent_id", "INTEGER")
+
+    c.execute("""
+        INSERT OR IGNORE INTO site_stats(name, value)
+        VALUES('visitors', 0)
     """)
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS comments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            post_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            username TEXT NOT NULL,
-            content TEXT NOT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
+    c.execute("""
+        UPDATE users
+        SET role='admin', is_admin=1
+        WHERE role='admin' OR is_admin=1
     """)
 
-    # 방문자 통계 테이블
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS site_stats (
-            name TEXT PRIMARY KEY,
-            value INTEGER NOT NULL DEFAULT 0
-        )
-    """)
-
-    conn.execute("""
-        INSERT OR IGNORE INTO site_stats (name, value)
-        VALUES ('visitors', 0)
-    """)
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS visitor_days (
-            visit_date TEXT PRIMARY KEY,
-            count INTEGER NOT NULL DEFAULT 0
-        )
-    """)
-
-    conn.commit()
-    conn.close()
+    c.commit()
+    c.close()
 
 
-def login_required(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        if "user_id" not in session:
-            flash("로그인이 필요합니다.")
-            return redirect(url_for("login"))
-        return func(*args, **kwargs)
-    return wrapper
+def ensure_admin_account():
+    admin_id = os.environ.get("ADMIN_USERNAME", "Nose").strip()
+    admin_pw = os.environ.get("ADMIN_PASSWORD", "")
 
-
-def admin_required(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        if session.get("username") != "Nose":
-            abort(403)
-        return func(*args, **kwargs)
-    return wrapper
-
-
-@app.before_request
-def count_visitor():
-    if request.endpoint == "static":
+    if not admin_pw:
+        print("[ADMIN] ADMIN_PASSWORD가 설정되지 않았습니다.")
         return
 
+    c = db()
+
     try:
-        conn = db()
+        existing = c.execute(
+            "SELECT id FROM users WHERE username=?",
+            (admin_id,)
+        ).fetchone()
 
-        conn.execute("""
-            UPDATE site_stats
-            SET value = value + 1
-            WHERE name = 'visitors'
-        """)
+        password_hash = generate_password_hash(admin_pw)
 
-        today = datetime.now().strftime("%Y-%m-%d")
+        if existing:
+            c.execute("""
+                UPDATE users
+                SET password=?, role='admin',
+                    is_admin=1, is_banned=0
+                WHERE username=?
+            """, (password_hash, admin_id))
+            print("[ADMIN] 관리자 계정을 갱신했습니다.")
+        else:
+            c.execute("""
+                INSERT INTO users(
+                    username, password, nickname,
+                    role, is_admin, is_banned
+                )
+                VALUES(?, ?, ?, 'admin', 1, 0)
+            """, (admin_id, password_hash, admin_id))
+            print("[ADMIN] 관리자 계정을 생성했습니다.")
 
-        conn.execute("""
-            INSERT INTO visitor_days (visit_date, count)
-            VALUES (?, 1)
-            ON CONFLICT(visit_date)
-            DO UPDATE SET count = count + 1
-        """, (today,))
+        c.commit()
+    finally:
+        c.close()
 
-        conn.commit()
-        conn.close()
 
-    except sqlite3.Error:
-        app.logger.exception("방문자 수 기록 오류")
+def current_user():
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+
+    c = db()
+    user = c.execute(
+        "SELECT * FROM users WHERE id=?", (user_id,)
+    ).fetchone()
+    c.close()
+    return user
+
+
+def login_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        user = current_user()
+
+        if not user:
+            flash("로그인이 필요합니다.")
+            return redirect(url_for("login"))
+
+        if user["is_banned"]:
+            session.clear()
+            flash("이용이 정지된 계정입니다.")
+            return redirect(url_for("login"))
+
+        return f(*args, **kwargs)
+    return wrapper
+
+
+def admin_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        user = current_user()
+
+        if not user or not (
+            user["role"] == "admin" or user["is_admin"] == 1
+        ):
+            abort(403)
+
+        return f(*args, **kwargs)
+    return wrapper
+
+
+def notify(user_id, message, url):
+    if not user_id:
+        return
+
+    c = db()
+    c.execute("""
+        INSERT INTO notifications(user_id, message, url)
+        VALUES(?,?,?)
+    """, (user_id, message, url))
+    c.commit()
+    c.close()
+
+
+def unread_count():
+    if not session.get("user_id"):
+        return 0
+
+    c = db()
+    count = c.execute("""
+        SELECT COUNT(*) FROM notifications
+        WHERE user_id=? AND is_read=0
+    """, (session["user_id"],)).fetchone()[0]
+    c.close()
+    return count
+
+
+@app.context_processor
+def inject_globals():
+    return {
+        "current_user": current_user(),
+        "unread_count": unread_count()
+    }
 
 
 @app.route("/")
+@app.route("/board")
 def index():
-    conn = db()
+    q = request.args.get("q", "").strip()
+    category = request.args.get("category", "")
+    sort = request.args.get("sort", "latest")
 
-    posts = conn.execute("""
-        SELECT * FROM posts
-        ORDER BY id DESC
-        LIMIT 5
-    """).fetchall()
+    c = db()
 
-    conn.close()
+    sql = """
+        SELECT p.*,
+        (SELECT COUNT(*) FROM likes l
+         WHERE l.post_id=p.id) AS like_count,
+        (SELECT COUNT(*) FROM comments cm
+         WHERE cm.post_id=p.id) AS comment_count
+        FROM posts p WHERE 1=1
+    """
+    params = []
 
-    return render_template("index.html", posts=posts)
+    if q:
+        sql += " AND (p.title LIKE ? OR p.content LIKE ?)"
+        params.extend([f"%{q}%", f"%{q}%"])
+
+    if category in ("일반 게시물", "공지사항"):
+        sql += " AND p.category=?"
+        params.append(category)
+
+    if sort == "popular":
+        sql += " ORDER BY like_count DESC, p.id DESC"
+    else:
+        sql += " ORDER BY p.id DESC"
+
+    posts = c.execute(sql, params).fetchall()
+    c.close()
+
+    return render_template(
+        "index.html", posts=posts,
+        q=q, category=category, sort=sort
+    )
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -163,34 +331,27 @@ def register():
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
 
-        if not username or not password:
-            flash("아이디와 비밀번호를 입력하세요.")
+        if len(username) < 2 or len(password) < 6:
+            flash("아이디는 2자 이상, 비밀번호는 6자 이상이어야 합니다.")
             return redirect(url_for("register"))
 
-        if len(username) > 30 or len(password) < 4:
-            flash("아이디는 30자 이하, 비밀번호는 4자 이상이어야 합니다.")
-            return redirect(url_for("register"))
-
-        conn = db()
-
+        c = db()
         try:
-            conn.execute("""
-                INSERT INTO users (username, password)
-                VALUES (?, ?)
+            c.execute("""
+                INSERT INTO users(username, password, nickname)
+                VALUES(?,?,?)
             """, (
                 username,
-                generate_password_hash(password)
+                generate_password_hash(password),
+                username
             ))
-
-            conn.commit()
+            c.commit()
             flash("회원가입이 완료되었습니다.")
             return redirect(url_for("login"))
-
         except sqlite3.IntegrityError:
-            flash("이미 존재하는 아이디입니다.")
-
+            flash("이미 사용 중인 아이디입니다.")
         finally:
-            conn.close()
+            c.close()
 
     return render_template("register.html")
 
@@ -201,69 +362,50 @@ def login():
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
 
-        conn = db()
+        c = db()
+        user = c.execute(
+            "SELECT * FROM users WHERE username=?", (username,)
+        ).fetchone()
+        c.close()
 
-        user = conn.execute("""
-            SELECT * FROM users
-            WHERE username = ?
-        """, (username,)).fetchone()
+        password_ok = False
 
-        conn.close()
+        if user:
+            try:
+                password_ok = check_password_hash(
+                    user["password"], password
+                )
+            except (ValueError, TypeError):
+                password_ok = False
 
-        if user and check_password_hash(user["password"], password):
+            if not password_ok and user["password"] == password:
+                password_ok = True
+                c = db()
+                c.execute(
+                    "UPDATE users SET password=? WHERE id=?",
+                    (generate_password_hash(password), user["id"])
+                )
+                c.commit()
+                c.close()
+
+        if user and password_ok:
+            if user["is_banned"]:
+                flash("이용이 정지된 계정입니다.")
+                return redirect(url_for("login"))
+
             session.clear()
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             return redirect(url_for("index"))
 
-        flash("아이디 또는 비밀번호가 틀렸습니다.")
+        flash("아이디 또는 비밀번호가 올바르지 않습니다.")
 
     return render_template("login.html")
-
 
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect(url_for("index"))
-
-
-@app.route("/profile")
-@login_required
-def profile():
-    conn = db()
-
-    user = conn.execute("""
-        SELECT * FROM users
-        WHERE id = ?
-    """, (session["user_id"],)).fetchone()
-
-    posts = conn.execute("""
-        SELECT * FROM posts
-        WHERE user_id = ?
-        ORDER BY id DESC
-    """, (session["user_id"],)).fetchall()
-
-    conn.close()
-
-    return render_template(
-        "profile.html",
-        user=user,
-        posts=posts
-    )
-
-
-@app.route("/board")
-def board():
-    conn = db()
-
-    posts = conn.execute("""
-        SELECT * FROM posts
-        ORDER BY id DESC
-    """).fetchall()
-
-    conn.close()
-
-    return render_template("board.html", posts=posts)
 
 
 @app.route("/write", methods=["GET", "POST"])
@@ -272,276 +414,542 @@ def write():
     if request.method == "POST":
         title = request.form.get("title", "").strip()
         content = request.form.get("content", "").strip()
-        category = request.form.get(
-            "category", "일반 게시물"
-        ).strip()
+        category = request.form.get("category", "일반 게시물")
+        user = current_user()
 
         if not title or not content:
             flash("제목과 내용을 입력하세요.")
             return redirect(url_for("write"))
 
-        if category not in ("일반 게시물", "공지사항"):
+        if user["role"] != "admin" and user["is_admin"] != 1:
             category = "일반 게시물"
 
-        conn = db()
-
-        conn.execute("""
-            INSERT INTO posts
-            (user_id, username, category, title, content)
-            VALUES (?, ?, ?, ?, ?)
+        c = db()
+        c.execute("""
+            INSERT INTO posts(
+                user_id, username, category, title, content
+            ) VALUES(?,?,?,?,?)
         """, (
-            session["user_id"],
-            session["username"],
-            category,
-            title,
-            content
+            user["id"], user["username"],
+            category, title, content
         ))
-
-        conn.commit()
-        conn.close()
-
-        return redirect(url_for("board"))
+        c.commit()
+        c.close()
+        return redirect(url_for("index"))
 
     return render_template("write.html")
 
 
 @app.route("/post/<int:post_id>")
 def post(post_id):
-    conn = db()
+    c = db()
+    item = c.execute(
+        "SELECT * FROM posts WHERE id=?", (post_id,)
+    ).fetchone()
 
-    post_data = conn.execute("""
-        SELECT * FROM posts
-        WHERE id = ?
-    """, (post_id,)).fetchone()
-
-    if post_data is None:
-        conn.close()
+    if not item:
+        c.close()
         abort(404)
 
-    comments = conn.execute("""
+    c.execute("""
+        UPDATE posts SET views=COALESCE(views,0)+1
+        WHERE id=?
+    """, (post_id,))
+
+    comments = c.execute("""
         SELECT * FROM comments
-        WHERE post_id = ?
-        ORDER BY id ASC
+        WHERE post_id=? ORDER BY id
     """, (post_id,)).fetchall()
 
-    conn.close()
+    like_count = c.execute(
+        "SELECT COUNT(*) FROM likes WHERE post_id=?",
+        (post_id,)
+    ).fetchone()[0]
+
+    liked = False
+    if session.get("user_id"):
+        liked = bool(c.execute("""
+            SELECT 1 FROM likes
+            WHERE user_id=? AND post_id=?
+        """, (session["user_id"], post_id)).fetchone())
+
+    c.commit()
+    c.close()
 
     return render_template(
         "post.html",
-        post=post_data,
-        comments=comments
+        post=item,
+        comments=comments,
+        like_count=like_count,
+        liked=liked
     )
 
 
-@app.route("/delete/<int:post_id>", methods=["POST"])
+@app.route("/like/<int:post_id>", methods=["POST"])
 @login_required
-def delete_post(post_id):
-    conn = db()
+def like(post_id):
+    c = db()
 
-    post_data = conn.execute("""
-        SELECT * FROM posts
-        WHERE id = ?
-    """, (post_id,)).fetchone()
-
-    if post_data is None:
-        conn.close()
+    if not c.execute(
+        "SELECT id FROM posts WHERE id=?", (post_id,)
+    ).fetchone():
+        c.close()
         abort(404)
 
-    if (
-        post_data["user_id"] != session["user_id"]
-        and session.get("username") != "Nose"
-    ):
-        conn.close()
-        abort(403)
+    old = c.execute("""
+        SELECT 1 FROM likes
+        WHERE user_id=? AND post_id=?
+    """, (session["user_id"], post_id)).fetchone()
 
-    conn.execute(
-        "DELETE FROM comments WHERE post_id = ?",
-        (post_id,)
-    )
+    if old:
+        c.execute("""
+            DELETE FROM likes
+            WHERE user_id=? AND post_id=?
+        """, (session["user_id"], post_id))
+    else:
+        c.execute("""
+            INSERT OR IGNORE INTO likes(user_id, post_id)
+            VALUES(?,?)
+        """, (session["user_id"], post_id))
 
-    conn.execute(
-        "DELETE FROM posts WHERE id = ?",
-        (post_id,)
-    )
+        owner = c.execute(
+            "SELECT user_id FROM posts WHERE id=?", (post_id,)
+        ).fetchone()
 
-    conn.commit()
-    conn.close()
+        if owner and owner["user_id"] != session["user_id"]:
+            notify(
+                owner["user_id"],
+                "게시글에 좋아요가 달렸습니다.",
+                url_for("post", post_id=post_id)
+            )
 
-    return redirect(url_for("board"))
+    c.commit()
+    c.close()
+    return redirect(url_for("post", post_id=post_id))
 
 
-@app.route(
-    "/post/<int:post_id>/comment",
-    methods=["POST"]
-)
+@app.route("/comment/<int:post_id>", methods=["POST"])
 @login_required
 def add_comment(post_id):
     content = request.form.get("content", "").strip()
+    parent_id = request.form.get("parent_id", type=int)
 
     if not content:
         return redirect(url_for("post", post_id=post_id))
 
-    conn = db()
+    c = db()
 
-    exists = conn.execute("""
-        SELECT id FROM posts
-        WHERE id = ?
-    """, (post_id,)).fetchone()
-
-    if exists is None:
-        conn.close()
+    if not c.execute(
+        "SELECT id FROM posts WHERE id=?", (post_id,)
+    ).fetchone():
+        c.close()
         abort(404)
 
-    conn.execute("""
-        INSERT INTO comments
-        (post_id, user_id, username, content)
-        VALUES (?, ?, ?, ?)
+    if parent_id and not c.execute("""
+        SELECT id FROM comments
+        WHERE id=? AND post_id=?
+    """, (parent_id, post_id)).fetchone():
+        parent_id = None
+
+    c.execute("""
+        INSERT INTO comments(
+            post_id, user_id, username, content, parent_id
+        ) VALUES(?,?,?,?,?)
     """, (
         post_id,
         session["user_id"],
         session["username"],
-        content
+        content,
+        parent_id
     ))
 
-    conn.commit()
-    conn.close()
+    owner = c.execute(
+        "SELECT user_id FROM posts WHERE id=?", (post_id,)
+    ).fetchone()
 
+    if owner and owner["user_id"] != session["user_id"]:
+        notify(
+            owner["user_id"],
+            "새 댓글이 작성되었습니다.",
+            url_for("post", post_id=post_id)
+        )
+
+    c.commit()
+    c.close()
     return redirect(url_for("post", post_id=post_id))
 
 
-@app.route(
-    "/comment/<int:comment_id>/delete",
-    methods=["POST"]
-)
-@login_required
-def delete_comment(comment_id):
-    conn = db()
+@app.route("/profile/<int:user_id>")
+def profile(user_id):
+    c = db()
 
-    comment = conn.execute("""
-        SELECT * FROM comments
-        WHERE id = ?
-    """, (comment_id,)).fetchone()
+    user = c.execute(
+        "SELECT * FROM users WHERE id=?", (user_id,)
+    ).fetchone()
 
-    if comment is None:
-        conn.close()
+    if not user:
+        c.close()
         abort(404)
 
-    if (
-        comment["user_id"] != session["user_id"]
-        and session.get("username") != "Nose"
-    ):
-        conn.close()
-        abort(403)
+    posts = c.execute("""
+        SELECT * FROM posts
+        WHERE user_id=? ORDER BY id DESC
+    """, (user_id,)).fetchall()
 
-    post_id = comment["post_id"]
+    followers = c.execute(
+        "SELECT COUNT(*) FROM follows WHERE following_id=?",
+        (user_id,)
+    ).fetchone()[0]
 
-    conn.execute("""
-        DELETE FROM comments
-        WHERE id = ?
-    """, (comment_id,))
+    following = c.execute(
+        "SELECT COUNT(*) FROM follows WHERE follower_id=?",
+        (user_id,)
+    ).fetchone()[0]
 
-    conn.commit()
-    conn.close()
+    followed = False
+    if session.get("user_id"):
+        followed = bool(c.execute("""
+            SELECT 1 FROM follows
+            WHERE follower_id=? AND following_id=?
+        """, (session["user_id"], user_id)).fetchone())
 
-    return redirect(url_for("post", post_id=post_id))
+    c.close()
+
+    return render_template(
+        "profile.html",
+        profile=user,
+        posts=posts,
+        followers=followers,
+        following=following,
+        followed=followed
+    )
 
 
-@app.route("/admin")
+@app.route("/profile/edit", methods=["GET", "POST"])
+@login_required
+def edit_profile():
+    if request.method == "POST":
+        nickname = request.form.get("nickname", "").strip()[:30]
+        bio = request.form.get("bio", "").strip()[:200]
+
+        c = db()
+        c.execute("""
+            UPDATE users SET nickname=?, bio=?
+            WHERE id=?
+        """, (nickname, bio, session["user_id"]))
+        c.commit()
+        c.close()
+
+        flash("프로필을 수정했습니다.")
+        return redirect(url_for(
+            "profile", user_id=session["user_id"]
+        ))
+
+    return render_template(
+        "edit_profile.html",
+        user=current_user()
+    )
+
+
+@app.route("/follow/<int:user_id>", methods=["POST"])
+@login_required
+def follow(user_id):
+    if user_id == session["user_id"]:
+        abort(400)
+
+    c = db()
+
+    if not c.execute(
+        "SELECT id FROM users WHERE id=?", (user_id,)
+    ).fetchone():
+        c.close()
+        abort(404)
+
+    old = c.execute("""
+        SELECT 1 FROM follows
+        WHERE follower_id=? AND following_id=?
+    """, (session["user_id"], user_id)).fetchone()
+
+    if old:
+        c.execute("""
+            DELETE FROM follows
+            WHERE follower_id=? AND following_id=?
+        """, (session["user_id"], user_id))
+    else:
+        c.execute("""
+            INSERT OR IGNORE INTO follows(
+                follower_id, following_id
+            ) VALUES(?,?)
+        """, (session["user_id"], user_id))
+
+        notify(
+            user_id,
+            "새로운 회원이 팔로우했습니다.",
+            url_for("profile", user_id=session["user_id"])
+        )
+
+    c.commit()
+    c.close()
+    return redirect(url_for("profile", user_id=user_id))
+
+
+@app.route("/notifications")
+@login_required
+def notifications():
+    c = db()
+
+    items = c.execute("""
+        SELECT * FROM notifications
+        WHERE user_id=? ORDER BY id DESC
+    """, (session["user_id"],)).fetchall()
+
+    c.execute("""
+        UPDATE notifications SET is_read=1
+        WHERE user_id=?
+    """, (session["user_id"],))
+
+    c.commit()
+    c.close()
+    return render_template("notifications.html", items=items)
+
+
+@app.route("/messages/<int:user_id>", methods=["GET", "POST"])
+@login_required
+def messages(user_id):
+    c = db()
+
+    if not c.execute(
+        "SELECT id FROM users WHERE id=?", (user_id,)
+    ).fetchone():
+        c.close()
+        abort(404)
+
+    if request.method == "POST":
+        content = request.form.get("content", "").strip()
+
+        if content:
+            c.execute("""
+                INSERT INTO messages(
+                    sender_id, receiver_id, content
+                ) VALUES(?,?,?)
+            """, (
+                session["user_id"],
+                user_id,
+                content[:2000]
+            ))
+            c.commit()
+
+    items = c.execute("""
+        SELECT * FROM messages
+        WHERE (sender_id=? AND receiver_id=?)
+           OR (sender_id=? AND receiver_id=?)
+        ORDER BY id
+    """, (
+        session["user_id"], user_id,
+        user_id, session["user_id"]
+    )).fetchall()
+
+    c.close()
+
+    return render_template(
+        "messages.html",
+        items=items,
+        target_id=user_id
+    )
+
+@app.route("/chat", methods=["GET", "POST"])
+@login_required
+def chat():
+    c = db()
+
+    if request.method == "POST":
+        content = request.form.get("content", "").strip()
+
+        if content:
+            c.execute("""
+                INSERT INTO chat_messages(
+                    user_id, username, content
+                ) VALUES(?,?,?)
+            """, (
+                session["user_id"],
+                session["username"],
+                content[:1000]
+            ))
+            c.commit()
+
+    items = c.execute("""
+        SELECT * FROM chat_messages
+        ORDER BY id DESC LIMIT 100
+    """).fetchall()
+
+    c.close()
+
+    return render_template(
+        "chat.html",
+        items=list(reversed(items))
+    )
+    @app.route("/admin")
 @login_required
 @admin_required
 def admin():
-    conn = db()
+    c = db()
 
-    users = conn.execute("""
-        SELECT * FROM users
-        ORDER BY id DESC
-    """).fetchall()
+    users = c.execute(
+        "SELECT * FROM users ORDER BY id DESC"
+    ).fetchall()
 
-    posts = conn.execute("""
+    posts = c.execute("""
         SELECT * FROM posts
-        ORDER BY id DESC
+        ORDER BY id DESC LIMIT 100
     """).fetchall()
 
-    visitor_count = conn.execute("""
+    visitors = c.execute("""
         SELECT value FROM site_stats
-        WHERE name = 'visitors'
-    """).fetchone()
+        WHERE name='visitors'
+    """).fetchone()[0]
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    logs = c.execute("""
+        SELECT * FROM admin_logs
+        ORDER BY id DESC LIMIT 50
+    """).fetchall()
 
-    today_count = conn.execute("""
-        SELECT count FROM visitor_days
-        WHERE visit_date = ?
-    """, (today,)).fetchone()
-
-    conn.close()
+    c.close()
 
     return render_template(
         "admin.html",
         users=users,
         posts=posts,
-        visitor_count=visitor_count["value"] if visitor_count else 0,
-        today_count=today_count["count"] if today_count else 0
+        visitors=visitors,
+        logs=logs
     )
 
 
 @app.route(
-    "/admin/user/<int:user_id>/delete",
+    "/admin/user/<int:user_id>/<action>",
     methods=["POST"]
 )
 @login_required
 @admin_required
-def delete_user(user_id):
+def admin_user(user_id, action):
     if user_id == session["user_id"]:
         abort(400)
 
-    conn = db()
+    c = db()
 
-    conn.execute(
-        "DELETE FROM comments WHERE user_id = ?",
-        (user_id,)
-    )
+    if action == "ban":
+        c.execute(
+            "UPDATE users SET is_banned=1 WHERE id=?",
+            (user_id,)
+        )
 
-    conn.execute(
-        "DELETE FROM posts WHERE user_id = ?",
-        (user_id,)
-    )
+    elif action == "unban":
+        c.execute(
+            "UPDATE users SET is_banned=0 WHERE id=?",
+            (user_id,)
+        )
 
-    conn.execute(
-        "DELETE FROM users WHERE id = ?",
-        (user_id,)
-    )
+    elif action == "delete":
+        c.execute(
+            "DELETE FROM users WHERE id=?",
+            (user_id,)
+        )
 
-    conn.commit()
-    conn.close()
+        c.execute("""
+            DELETE FROM follows
+            WHERE follower_id=? OR following_id=?
+        """, (user_id, user_id))
+
+        c.execute(
+            "DELETE FROM likes WHERE user_id=?",
+            (user_id,)
+        )
+
+    else:
+        c.close()
+        abort(400)
+
+    c.execute("""
+        INSERT INTO admin_logs(admin, action)
+        VALUES(?,?)
+    """, (
+        session["username"],
+        f"{action}: user {user_id}"
+    ))
+
+    c.commit()
+    c.close()
 
     return redirect(url_for("admin"))
 
 
-@app.errorhandler(404)
-def not_found(error):
-    return "페이지를 찾을 수 없습니다.", 404
+@app.route(
+    "/admin/post/<int:post_id>/delete",
+    methods=["POST"]
+)
+@login_required
+@admin_required
+def admin_delete_post(post_id):
+    c = db()
+
+    c.execute(
+        "DELETE FROM comments WHERE post_id=?",
+        (post_id,)
+    )
+
+    c.execute(
+        "DELETE FROM likes WHERE post_id=?",
+        (post_id,)
+    )
+
+    c.execute(
+        "DELETE FROM posts WHERE id=?",
+        (post_id,)
+    )
+
+    c.execute("""
+        INSERT INTO admin_logs(admin, action)
+        VALUES(?,?)
+    """, (
+        session["username"],
+        f"delete post {post_id}"
+    ))
+
+    c.commit()
+    c.close()
+
+    return redirect(url_for("admin"))
 
 
 @app.errorhandler(403)
-def forbidden(error):
-    return "접근 권한이 없습니다.", 403
+def forbidden(e):
+    return render_template(
+        "error.html",
+        code=403,
+        message="접근 권한이 없습니다."
+    ), 403
 
 
-# Gunicorn에서도 데이터베이스 초기화
+@app.errorhandler(404)
+def not_found(e):
+    return render_template(
+        "error.html",
+        code=404,
+        message="페이지를 찾을 수 없습니다."
+    ), 404
+
+
+# 앱 시작 시 DB 초기화 및 관리자 계정 설정
 init_db()
+ensure_admin_account()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--create-admin", action="store_true")
-    args = parser.parse_args()
-
-    if args.create_admin:
-        print("관리자 계정은 별도로 생성해야 합니다.")
-    else:
-        app.run(
-            host="0.0.0.0",
-            port=int(os.environ.get("PORT", 5000)),
-            debug=True
-        )
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000))
+    )
+    if __name__ == "__main__":
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000))
+    )
